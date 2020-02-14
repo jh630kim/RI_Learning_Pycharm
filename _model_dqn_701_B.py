@@ -20,10 +20,10 @@ class DQN:
         self.input_size = input_size
         self.output_size = output_size
         self.net_name = name
-        self.x = ''
+
         self._build_network()
 
-    def _build_network(self, h_size=10, l_rate=0.01) -> None:
+    def _build_network(self, h_size=16, l_rate=0.01) -> None:
         """DQN Network architecture (simple MLP)
 
         Args:
@@ -40,7 +40,8 @@ class DQN:
             W1 = tf.get_variable(name="W1",
                                  shape=[self.input_size, h_size],
                                  initializer=tf.contrib.layers.xavier_initializer())
-            layer1 = tf.nn.tanh(tf.matmul(self._X, W1))
+            # layer1 = tf.nn.tanh(tf.matmul(self._X, W1))  # 10,000번 가까이 돌려야 학습된다
+            layer1 = tf.nn.relu(tf.matmul(self._X, W1))  # 상대적으로 빠르게 학습되는 건 같은데...
 
             # Layer 2
             W2 = tf.get_variable(name="W2",
@@ -51,17 +52,18 @@ class DQN:
             # Q prediction, Y_hat, hypothesis
             self._Qpred = layer2
 
-        # Q-value
-        self._Y = tf.placeholder(dtype=tf.float32,
-                                 shape=[None, self.output_size],
-                                 name='output_Y')
+            # Q-value(Target)
+            self._Y = tf.placeholder(dtype=tf.float32,
+                                     shape=[None, self.output_size],
+                                     name='output_Y')
 
-        # cost = loss function
-        self._cost = tf.reduce_mean(tf.square(self._Y - self._Qpred))
+            # cost = loss function
+            self._cost = tf.reduce_mean(tf.square(self._Y - self._Qpred))
 
-        # learning
-        self._train = tf.train.AdamOptimizer(learning_rate=l_rate)\
-            .minimize(self._cost)
+            # learning
+            self._train = tf.train.AdamOptimizer(learning_rate=l_rate)\
+                .minimize(self._cost)
+
 
     def predict(self, state: np.ndarray) -> np.ndarray:
         """Returns Q(s, a)
@@ -73,8 +75,9 @@ class DQN:
             np.ndarray: Q value array, shape (n, output_dim)
         """
 
-        self.x = np.reshape(state, [1, self.input_size])
+        self.x = np.reshape(state, [-1, self.input_size])
         return self.session.run(self._Qpred, feed_dict={self._X: self.x})
+
 
     def update(self, x_stack, y_stack) -> list:
         """Performs updates on given X and y and returns a result
