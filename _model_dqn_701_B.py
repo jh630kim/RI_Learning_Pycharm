@@ -23,34 +23,43 @@ class DQN:
 
         self._build_network()
 
-    def _build_network(self, h_size=16, l_rate=0.01) -> None:
+    def _build_network(self, h_size=10, l_rate=0.001) -> None:
         """DQN Network architecture (simple MLP)
 
         Args:
             h_size (int, optional): Hidden layer dimension
             l_rate (float, optional): Learning rate
         """
-
         with tf.variable_scope(self.net_name):
             # Input
             self._X = tf.placeholder(dtype=tf.float32,
                                      shape=[None, self.input_size],
                                      name='input_X')
+
+            # Sung Kim 강의(Lab 7-2)
             # Layer 1
-            W1 = tf.get_variable(name="W1",
+            self.W1 = tf.get_variable(name="W1",
                                  shape=[self.input_size, h_size],
                                  initializer=tf.contrib.layers.xavier_initializer())
-            # layer1 = tf.nn.tanh(tf.matmul(self._X, W1))  # 10,000번 가까이 돌려야 학습된다
-            layer1 = tf.nn.relu(tf.matmul(self._X, W1))  # 상대적으로 빠르게 학습되는 건 같은데...
+            layer1 = tf.nn.relu(tf.matmul(self._X, self.W1))
 
             # Layer 2
-            W2 = tf.get_variable(name="W2",
+            self.W2 = tf.get_variable(name="W2",
                                  shape=[h_size, self.output_size],
                                  initializer=tf.contrib.layers.xavier_initializer())
-            layer2 = tf.matmul(layer1, W2)
+            layer2 = tf.matmul(layer1, self.W2)
 
+            # github의 Network 변형
+            # tf.layers.dense(input size, output size, activation=xxx)
+            new_layer1 = tf.layers.dense(self._X, h_size, activation=tf.nn.relu)
+            new_layer2 = tf.layers.dense(new_layer1, self.output_size)
+
+            # github의 Network 원본
+            net = self._X
+            net = tf.layers.dense(net, h_size, activation=tf.nn.relu)
+            net_layer2 = tf.layers.dense(net, self.output_size)
             # Q prediction, Y_hat, hypothesis
-            self._Qpred = layer2
+            self._Qpred = net_layer2
 
             # Q-value(Target)
             self._Y = tf.placeholder(dtype=tf.float32,

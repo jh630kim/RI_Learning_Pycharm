@@ -42,7 +42,9 @@ class DQN:
             l_rate (float, optional): Learning rate
         """
         with tf.variable_scope(self.net_name):
-            self._X = tf.placeholder(tf.float32, [None, self.input_size], name="input_x")
+            self._X = tf.placeholder(tf.float32,
+                                     [None, self.input_size],
+                                     name="input_x")
             net = self._X
 
             net = tf.layers.dense(net, h_size, activation=tf.nn.relu)

@@ -18,7 +18,6 @@ import _model_dqn_701_B as m
 
 # Cart Pole 환경
 env = gym.make('CartPole-v0')
-# env = gym.wrappers.Monitor(env, 'gym-results/', force=True)
 
 # 초기값 설정
 INPUT_SIZE = env.observation_space.shape[0]     # 4
@@ -26,9 +25,10 @@ OUTPUT_SIZE = env.action_space.n                # 2
 
 dis = 0.9   # discount rate
 REPLAY_MEMORY = 50000
-MAX_EPISODE = 5000
+MAX_EPISODE = 500
 BATCH_SIZE = 64
 EPSILON_DECAYING_EPISODE = MAX_EPISODE * 0.01
+TARGET_UPDATE_FREQUENCY = 5
 
 # 학습 Data 저장
 dataDir = './data/'
@@ -60,7 +60,7 @@ def bot_play(mainDQN: m.DQN) -> None:
             break
 
 
-def train_sample_replay(dqn: m.DQN, train_batch: list) -> float:
+def train_sample_replay1(mainDQN: m.DQN, targetDQN: m.DQN, train_batch: list) -> float:
     """Prepare X_batch, y_batch and train them
 
     Recall our loss function is
@@ -74,32 +74,71 @@ def train_sample_replay(dqn: m.DQN, train_batch: list) -> float:
                    or reward (if terminated early)
 
     Args:
-        dqn (m.DQN): DQN Agent to train & run
+        mainDQN (m.DQN): DQN Agent to train & run
+        targetDQN (m.DQN): DQN Agent to set target Q value
         train_batch (list): Mini batch of "Sample" Replay memory
             Each element is a tuple of (state, action, reward, next_state, done)
 
     Returns:
         loss: Returns a loss
     """
-    x_stack = np.empty(0).reshape(0, dqn.input_size)
-    y_stack = np.empty(0).reshape(0, dqn.output_size)
+    x_stack = np.empty(0).reshape(0, mainDQN.input_size)
+    y_stack = np.empty(0).reshape(0, mainDQN.output_size)
 
     # get stored information from the buffer
     for state, action, reward, next_state, done in train_batch:
-        Q = dqn.predict(state)
+        # 학습시키고자 하는 Q값 (Q 목표값)
+        Q = mainDQN.predict(state)  # 현재 상태의 Q 값 # todo: target DQN 이용
 
-        if done:    # terminal?
+        if done:    # Q 목표값 update
             Q[0, action] = reward
         else:
-            Q[0, action] = reward + dis * np.max(dqn.predict(next_state))
+            Q[0, action] = reward \
+                           + dis * np.max(targetDQN.
+                                          predict(next_state))
 
         x_stack = np.vstack([x_stack, state])
         y_stack = np.vstack([y_stack, Q])
 
     # Train our network using target and predicted Q values on each episode
-    cost, _ = dqn.update(x_stack, y_stack)
+    # DQN 2015!!!
+    # Q 목표값은 target DQN을 이용해서 얻고,
+    # Q-net(weight)의 update는 main DQN을 이용해서 한다.
+    cost, _ = mainDQN.update(x_stack, y_stack)
 
     return cost
+
+def train_sample_replay(mainDQN: m.DQN, targetDQN: m.DQN, train_batch: list) -> float:
+    states = np.vstack([x[0] for x in train_batch])
+    actions = np.array([x[1] for x in train_batch])
+    rewards = np.array([x[2] for x in train_batch])
+    next_states = np.vstack([x[3] for x in train_batch])
+    done = np.array([x[4] for x in train_batch])
+
+    X = states
+
+    Q_target = rewards + dis * np.max(targetDQN.predict(next_states), axis=1) * ~done
+
+    y = mainDQN.predict(states)
+    y[np.arange(len(X)), actions] = Q_target
+
+    # Train our network using target and predicted Q values on each episode
+    return mainDQN.update(X, y)
+
+
+def get_copy_var_ops(*, dest_scope_name="target", src_scope_name="main"):
+    # src_scope -> dest_scope로 변수를 복사
+    op_holder = []
+
+    src_vars = tf.get_collection(
+        tf.GraphKeys.TRAINABLE_VARIABLES, scope=src_scope_name)
+    dest_vars = tf.get_collection(
+        tf.GraphKeys.TRAINABLE_VARIABLES, scope=dest_scope_name)
+
+    for src_var, dest_var in zip(src_vars, dest_vars):
+        op_holder.append(dest_var.assign(src_var.value()))
+
+    return op_holder
 
 
 def main():
@@ -111,24 +150,30 @@ def main():
 
     with tf.Session() as sess:
         # model 생성
-        mainDQN = m.DQN(sess, INPUT_SIZE, OUTPUT_SIZE)
+        mainDQN = m.DQN(sess, INPUT_SIZE, OUTPUT_SIZE, name="main")
+        targetDQN = m.DQN(sess, INPUT_SIZE, OUTPUT_SIZE, name="target")
+        tf.global_variables_initializer().run()
 
         # 학습 데이터 저장소
         saver = tf.train.Saver(write_version=tf.train.SaverDef.V2)
 
-        # tf 변수 초기화
-        tf.global_variables_initializer().run()
-
         # 이전 학습 데이터 읽고, 이어서 학습
         # saver.restore(sess, saveData + "/model.ckpt")
+
+        # main DQN의 weight을 target DQN으로 복사
+        # because, main DQN을 update 할 꺼니까.
+        copy_ops = get_copy_var_ops(dest_scope_name="tareget",
+                                    src_scope_name="main")
+
+        sess.run(copy_ops)
 
         # 학습
         for episode in range(max_episodes):
             # 초기화
-            # e = 1./((episode/10)+1)
-            e = 0.01
+            e = 1./((episode/10)+1)
+            # e = 0.01
             done = False
-            step_count = 0
+            step_count = 1
             state = env.reset()
 
             # 1회 시도
@@ -144,10 +189,14 @@ def main():
 
                 if done:
                     reward = -100
+
                 # (3) Experience Replay를 위한 Data Capture
                 replay_buffer.append((state, action, reward, next_state, done))
                 if len(replay_buffer) > REPLAY_MEMORY:
                     replay_buffer.popleft()
+
+                if step_count % TARGET_UPDATE_FREQUENCY == 0:
+                    sess.run(copy_ops)
 
                 state = next_state
                 step_count += 1
@@ -161,12 +210,13 @@ def main():
                 pass
 
             # 50회 시도(episode)후 한번씩 50회 학습
-            if episode % 50 == 1:   # train every 50 episodes
-                for _ in range(50):
+            if episode % 5 == 1:   # train every 50 episodes
+                for _ in range(5):
                     if len(replay_buffer) > BATCH_SIZE:
                         minibatch = random.sample(replay_buffer, BATCH_SIZE)
-                        cost = train_sample_replay(mainDQN, minibatch)
+                        cost = train_sample_replay(mainDQN, targetDQN, minibatch)
                         # print("Cost: ", cost)
+                    sess.run(copy_ops)
 
                 # 1회 학습이 끝나면 모델 저장
                 checkpoint_path = os.path.join(saveData, "model.ckpt")
@@ -175,7 +225,6 @@ def main():
 
         # 최종 학습된 결과로 play
         bot_play(mainDQN)
-
 
 if __name__ == "__main__":
     main()

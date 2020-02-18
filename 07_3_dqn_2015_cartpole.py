@@ -16,7 +16,8 @@ import numpy as np
 import tensorflow as tf
 import random
 from collections import deque
-import dqn
+# import dqn
+import _model_dqn_701_B as dqn
 
 import gym
 from typing import List
